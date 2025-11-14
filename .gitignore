@@ -1,55 +1,71 @@
-# Prerequisites
-*.d
-
-# Object files
+# --- Compiled binaries ---
+server
+thumbd
+scanner
+detector
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
 *.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+*.a
+*.so
+*.dylib
+*.exe
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# --- Build system files ---
+/build/
+/dist/
+/bin/
+/obj/
+/tmp/
+/*.core
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# --- Logs and runtime data ---
+*.log
+*.pid
+*.swp
+*.lock
+*.bak
+*.old
+*.tmp
 
-# debug information files
-*.dwo
+# --- Photos, uploads, and storage ---
+/srv/photos/
+/uploads/
+/storage/
+/gallery/
+/test_photos/
+/photos.db
+
+# --- Configuration / secrets ---
+config.json
+.env
+.env.*
+*.key
+*.crt
+
+# --- OS / editor files ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*.orig
+
+# --- Coverage / testing ---
+/coverage/
+/*.gcda
+/*.gcno
+/*.gcov
+/test-output/
+/test-results/
+
+# --- Packaging ---
+*.tar
+*.zip
+*.gz
+
+# --- Docs / generated files ---
+docs/*.pdf
+docs/*.png
+docs/*.jpg

@@ -19,21 +19,13 @@ all: build
 
 bootstrap:
 	@echo "==> Bootstrapping environment..."
-	@echo "Installing build tools (requires doas/sudo)..."
-	doas pkg_add gcc gmake || true
-	doas pkg_add libjpeg || true
-	doas mkdir -p /srv/photos
-	doas chown _www:_www /srv/photos
-	@echo "==> Environment ready!"
+	@echo "Bootstrap not implemented yet"
 
 build:
-	@echo "==> Building Hardened Photo Server..."
-	$(CC) $(CFLAGS) $(SRC) -o $(BIN)
-	@echo "==> Build complete: ./$(BIN)"
+	@echo "Build command not implemeneted yet"
 
 run: build
-	@echo "==> Starting Hardened Photo Server on http://localhost:8080"
-	doas -u _www ./$(BIN)
+	@echo "Build run command not implemeneted yet"
 
 clean:
 	rm -f $(BIN) *.o

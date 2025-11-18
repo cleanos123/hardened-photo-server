@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-
+#include <sys/sendfile.h>
 
 #define PORT 8080
 #define BACKLOG 10
@@ -79,13 +79,13 @@ void* handle_client(void *arg){
 	ssize_t bytes_received =  recv(client_fd, buffer, BUFFER_SIZE, 0 );
 	if (bytes_received > 0) {
 		regex_t regex;
-		regcomp( &regex,"GET /([^ ]*) HTTP/1", REG_EXTENDED);
-		regmatch_t matches[2];
+		regcomp( &regex,"GET /([^ ]*) HTTP/1.1", REG_EXTENDED);
+		regmatch_t matches[2]; // uses regular expressions and will compare to check if /index.html is grabbed
 		
 		if (regexec(&regex, buffer, 2, matches, 0) == 0){
 			// extract filename from request and decode URL
 			buffer[matches[1].rm_eo] = '\0';
-			const char *url_encoded_file_name = buffer + matches[1].rm_so;
+			const char *url_encoded_file_name = buffer + matches[1].rm_so; //buffer is a pointer + 5 so that it can point to /index.html\0 and we use that for resolving
 			char *file_name = url_decode(url_encoded_file_name);
 			
 			//get file extension
@@ -100,8 +100,13 @@ void* handle_client(void *arg){
 			//send http response
 			send(client_fd, response, response_len, 0);
 			
+			//client sent html, we wait for response
+			
 			free(response);
 			free(file_name);
+		}
+		else{
+			
 		}
 		regfree(&regex);
 	}
@@ -127,7 +132,7 @@ void build_http_response(const char *file_name, const char *file_ext, char *resp
 	//get file size for content length
 	struct stat file_stat;
 	fstat(file_fd, &file_stat);
-	off_t file_size= file_stat.st_size;
+	off_t file_size = file_stat.st_size;
 	
 	//copy header to response buffer
 	*response_len = 0;
@@ -167,11 +172,11 @@ char *url_decode(const char *src){
         if (src[i] == '%' && i + 2 < src_len) {
             int hex_val;
             sscanf(src + i + 1, "%2x", &hex_val);
-            decoded[decoded_len++] = hex_val;
+            decoded[decoded_len++] = hex_val; // moves hex values (spaces etc) to decoded
             i += 2;
         } else {
-            decoded[decoded_len++] = src[i];
-        }
+            decoded[decoded_len++] = src[i]; //moves regular characters to decoded
+        } 
     }
 
     // add null terminator

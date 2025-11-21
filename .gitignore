@@ -9,6 +9,7 @@ detector
 *.so
 *.dylib
 *.exe
+APP_PASSWORD
 
 # --- Build system files ---
 /build/
@@ -69,3 +70,4 @@ Thumbs.db
 docs/*.pdf
 docs/*.png
 docs/*.jpg
+APP_PASSWORD.txt

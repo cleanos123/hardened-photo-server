@@ -402,6 +402,13 @@ static void *handle_client(void *argp) {
         ssize_t req_len = read_http_request_tls(ssl, reqbuf, BUFFER_SIZE - 1, 30, &content_len);
         if (req_len <= 0) break;
         reqbuf[req_len] = '\0';
+		char *cookie = header_value_dup(reqbuf, "Cookie");
+		if (cookie) {
+			if (strcasestr_local(cookie, "auth=1")) {
+				isSigned = true;
+			}
+			free(cookie);
+		}
 
         int keep = should_keep_alive(reqbuf);
 
@@ -467,14 +474,18 @@ static void *handle_client(void *argp) {
                 p = amp + 1;
             }
 
-            int ok = (pass && strcmp(pass, expect_password) == 0);
-            free(pass);
             if (ok) {
-                isSigned = true;
-                redirect_to_tls(ssl, "/", keep);
-            } else {
-                redirect_to_tls(ssl, "/login?error=1", keep);
-            }
+				isSigned = true;
+
+				// Send redirect with a cookie for cross-connection auth
+				char hdr[256];
+				snprintf(hdr, sizeof(hdr),"Location: /\r\n""Set-Cookie: auth=1; Path=/; HttpOnly; Secure\r\n");
+
+				send_simple_response_tls(ssl,302, "Found","text/plain; charset=utf-8","Redirecting...",keep,hdr);
+			} 
+			else {
+				redirect_to_tls(ssl, "/login?error=1", keep);
+			}
             if (!keep) break; else continue;
         }
 

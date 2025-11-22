@@ -36,11 +36,12 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#define PHOTOS_DIR "photos"
+#define PHOTOS_DIR "/mnt/newdisk/photos"
 #ifndef BUFFER_SIZE
 #define BUFFER_SIZE (128 * 1024)
 #endif
@@ -317,6 +318,49 @@ static int write_all_fd(int fd, const void *buf, size_t len) {
     return 0;
 }
 
+static int write_index_json(const char *dir) {
+    char tmppath[512], outpath[512];
+    snprintf(outpath, sizeof(outpath), "%s/index.json", dir);
+    snprintf(tmppath, sizeof(tmppath),  "%s/.index.json.tmp", dir);
+
+    FILE *out = fopen(tmppath, "w");
+    if (!out) return -1;
+
+    DIR *d = opendir(dir);
+    if (!d) { fclose(out); remove(tmppath); return -1; }
+
+    fputs("[", out);
+    int first = 1;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        const char *name = ent->d_name;
+        if (!name || name[0] == '.') continue;                  // skip dotfiles/. and ..
+        if (strcmp(name, "index.json") == 0) continue;          // skip manifest
+
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, name);
+
+        struct stat st;
+        if (stat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+            if (!first) fputc(',', out);
+            first = 0;
+            // Names are sanitized to safe chars already when saving uploads.
+            fprintf(out, "\n  \"%s\"", name);
+        }
+    }
+    closedir(d);
+    fputs(first ? "]\n" : "\n]\n", out);
+    fclose(out);
+
+    // Atomic replace so readers never see a partial file.
+    if (rename(tmppath, outpath) != 0) {
+        remove(tmppath);
+        return -1;
+    }
+    return 0;
+}
+
 // ---------- client handler ----------
 struct client_arg {
     int fd;
@@ -522,7 +566,8 @@ static void *handle_client(void *argp) {
 				remaining -= (size_t)rn;
 			}
             close(fd);
-
+			
+			write_index_json(PHOTOS_DIR);
             char json[320];
             int n = snprintf(json, sizeof(json), "{ \"ok\": true, \"path\": \"%s\" }\n", outpath);
             if (send_header_tls(ssl, 201, "Created", "application/json; charset=utf-8", n, keep, NULL) >= 0) {

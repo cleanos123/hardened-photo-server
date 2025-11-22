@@ -633,8 +633,12 @@ static void *handle_client(void *argp) {
 		
 		if (!strncmp(path, "photos/", 7)) {
 			char mapped[4096];
-			snprintf(mapped, sizeof(mapped), "%s/%s", PHOTOS_DIR, path + 7);
-			snprintf(path, sizeof(path), "%s", mapped);
+			int n = snprintf(mapped, sizeof(mapped), "%s/%s", PHOTOS_DIR, path + 7);
+			if (n < 0 || (size_t)n >= sizeof(mapped)) {
+				mapped[sizeof(mapped) - 1] = '\0';  // force terminate
+			}
+			strncpy(path, mapped, sizeof(path) - 1);
+			path[sizeof(path) - 1] = '\0';
 		}
 
         if (is_head) {

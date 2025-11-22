@@ -139,6 +139,12 @@ static const char *get_mime_type(const char *ext) {
     if (!strcasecmp(ext, "pdf")) return "application/pdf";
 	if (!strcasecmp(ext, "mp4")) return "video/mp4";
     if (!strcasecmp(ext, "webp")) return "image/webp";
+	if (!strcasecmp(ext, "bmp"))  return "image/bmp";
+	if (!strcasecmp(ext, "jfif")) return "image/jpeg";
+	if (!strcasecmp(ext, "tif") || !strcasecmp(ext, "tiff")) return "image/tiff";
+	if (!strcasecmp(ext, "webm")) return "video/webm";
+	if (!strcasecmp(ext, "mov"))  return "video/quicktime";
+	if (!strcasecmp(ext, "mkv"))  return "video/x-matroska";
     return "application/octet-stream";
 }
 

@@ -137,8 +137,11 @@ static const char *get_mime_type(const char *ext) {
     if (!strcasecmp(ext, "ico")) return "image/x-icon";
     if (!strcasecmp(ext, "txt")) return "text/plain; charset=utf-8";
     if (!strcasecmp(ext, "pdf")) return "application/pdf";
+	if (!strcasecmp(ext, "mp4")) return "video/mp4";
+    if (!strcasecmp(ext, "webp")) return "image/webp";
     return "application/octet-stream";
 }
+
 
 // simple case-insensitive header fetch; returns malloc'd string (caller frees)
 static char *header_value_dup(const char *reqbuf, const char *name) {
@@ -545,6 +548,7 @@ static void *handle_client(void *argp) {
 			}
 
 			// stream the rest from TLS
+			size_t wrote = preloaded;
 			size_t remaining = (size_t)content_len - preloaded;
 			char ibuf[8192];
 			while (remaining > 0) {
@@ -563,8 +567,16 @@ static void *handle_client(void *argp) {
 				"text/plain; charset=utf-8", "Write failed", keep, NULL);
 					if (!keep) break; else continue;
 				}
+				wrote += (size_t)rn;
 				remaining -= (size_t)rn;
 			}
+			if (wrote != (size_t)content_len) {
+			// didn’t write the full file → treat as failure
+			unlink(outpath);  // optional: avoid leaving partial files
+			send_simple_response_tls(ssl, 500, "Internal Server Error","text/plain; charset=utf-8", "Short write (upload incomplete)", keep, NULL);
+			if (!keep) break; else continue;
+}
+			fsync(fd);
             close(fd);
 			
 			write_index_json(PHOTOS_DIR);

@@ -4,8 +4,8 @@
 
 CERT="server.crt"
 KEY="server.key"
-SRC="httpsetup_tls_raw.c"
-OUT="httpsetup_tls"
+SRC="httpsetup.c"
+OUT="httpsetup"
 
 # 1. Check if cert/key exist; if not, generate self-signed ones
 if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then

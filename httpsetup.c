@@ -474,6 +474,7 @@ static void *handle_client(void *argp) {
                 p = amp + 1;
             }
 
+			int ok = (pass && strcmp(pass, expect_password)== 0);
             if (ok) {
 				isSigned = true;
 

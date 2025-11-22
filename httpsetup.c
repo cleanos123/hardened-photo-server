@@ -1,17 +1,21 @@
-// httpsetup_tls.c
-// HTTP/1.1 keep-alive server with per-connection login (isSigned) over TLS (OpenSSL).
+// httpsetup_tls_raw.c
+// Minimal HTTPS server with login, static files, and RAW upload endpoint.
+// - RAW upload: POST /upload-raw
+//   * Content-Type: application/octet-stream
+//   * X-Filename: <desired name>
+//   * Body: exactly Content-Length bytes of the file
 //
-// Build: cc -O2 -pthread -Wall -Wextra -o httpsetup_tls httpsetup_tls.c -lssl -lcrypto
-// Run:   ./httpsetup_tls 8443 server.crt server.key
-// Test:  https://localhost:8443/login
-//
+// Build:  cc -O2 -pthread -Wall -Wextra -o httpsetup_tls httpsetup_tls_raw.c -lssl -lcrypto
+// Run:    ./httpsetup_tls
+/* Test:   curl -k -X POST https://localhost:8080/upload-raw \
+//           -H "Content-Type: application/octet-stream" \
+//           -H "X-Filename: test.jpg" \
+//           --data-binary @test.jpg
+*/
 // Notes:
-// - This is a TLS wrapper of the previous keep-alive server.
-// - Replaces send()/recv() with SSL_write()/SSL_read().
-// - Disables sendfile() (TLS can't use it). Uses read() + SSL_write() streaming.
-// - Timeout via SO_RCVTIMEO still applies to the underlying socket; we map SSL errors to failure.
-// - isSigned remains per-connection (per TCP/TLS session).
-// - For multi-connection sign-in, add cookie sessions later.
+// - Self-signed cert/key files "server.crt" and "server.key" must exist in cwd.
+// - Login is per-connection; default password is "password" (override with APP_PASSWORD).
+// - Files are written to /photos/<sanitized-filename> (directory must exist and be writable).
 
 #define _GNU_SOURCE
 #include <arpa/inet.h>
@@ -36,6 +40,7 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#define PHOTOS_DIR "photos"
 #ifndef BUFFER_SIZE
 #define BUFFER_SIZE (128 * 1024)
 #endif
@@ -49,7 +54,7 @@
 #endif
 
 #ifndef MAX_UPLOAD
-#define MAX_UPLOAD (50 * 1024 * 1024)
+#define MAX_UPLOAD (200 * 1024 * 1024)
 #endif
 
 // ---------- small utils ----------
@@ -73,146 +78,20 @@ static char *strcasestr_local(const char *haystack, const char *needle) {
     return NULL;
 }
 
-// --- ADD: byte search & filename sanitize helpers ---
-static void *memmem_local(const void *hay, size_t haylen, const void *nee, size_t neelen) {
-    if (neelen == 0 || haylen < neelen) return NULL;
-    const unsigned char *h = (const unsigned char*)hay;
-    const unsigned char *n = (const unsigned char*)nee;
-    for (size_t i = 0; i + neelen <= haylen; ++i) {
-        if (h[i] == n[0] && memcmp(h + i, n, neelen) == 0) return (void*)(h + i);
-    }
-    return NULL;
-}
-
+// keep only [A-Za-z0-9._-], strip directories
 static void sanitize_filename(char *s) {
-    // keep only [A-Za-z0-9._-], collapse others to '_', strip dirs
     char *p = s, *w = s;
-    // strip any path components
-    const char *last_slash = strrchr(s, '/');
-    const char *last_bslash = strrchr(s, '\\');
-    if (last_slash && (!last_bslash || last_slash > last_bslash)) p = (char*)last_slash + 1;
-    else if (last_bslash) p = (char*)last_bslash + 1;
+    const char *ls = strrchr(s, '/'), *lb = strrchr(s, '\\');
+    if (ls && (!lb || ls > lb)) p = (char*)ls + 1;
+    else if (lb) p = (char*)lb + 1;
     if (p != s) memmove(s, p, strlen(p) + 1);
     for (p = s; *p; ++p) {
         unsigned char c = (unsigned char)*p;
-        if ((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='.'||c=='_'||c=='-')
-            *w++ = (char)c;
-        else
-            *w++ = '_';
+        *w++ = ((c>='A'&&c<='Z')||(c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='.'||c=='_'||c=='-') ? c : '_';
     }
     *w = '\0';
-    if (*s == '\0') strcpy(s, "upload.bin");
+    if (!*s) strcpy(s, "upload.bin");
 }
-
-// --- ADD: extract boundary from Content-Type header line (lowercased already) ---
-static char *extract_boundary(const char *ctype_line) {
-    // expects something like "...multipart/form-data; boundary=----WebKitFormBoundaryX..."
-    const char *b = strcasestr_local(ctype_line, "boundary=");
-    if (!b) return NULL;
-    b += 9;
-    const char *end = strpbrk(b, ";\r\n");
-    size_t len = end ? (size_t)(end - b) : strlen(b);
-    // trim optional quotes
-    if (len >= 2 && b[0] == '"' && b[len-1] == '"') { b++; len -= 2; }
-    char *out = strndup(b, len);
-    return out;
-}
-
-// --- ADD: save single part from multipart body into /photos ---
-//		   save_single_part_to_photos(body, content_len, boundary, saved, sizeof(saved));
-static int save_single_part_to_photos(const char *body, long body_len, const char *boundary, char *saved_path, size_t saved_path_sz) {
-    // Build boundary tokens
-    size_t blen = strlen(boundary);
-    // leading marker: "--<boundary>\r\n"
-    char *marker = NULL;
-    {
-        size_t mlen = blen + 4;
-        marker = malloc(mlen + 1);
-        if (!marker) return -1;
-        snprintf(marker, mlen + 1, "--%s", boundary);
-    }
-
-    const char *p = body;
-    const char *body_end = body + body_len;
-
-    // Find first boundary line
-    const char *first = memmem_local(p, (size_t)(body_end - p), marker, strlen(marker));
-    if (!first) { free(marker); return -2; }
-    // Move to after CRLF
-    const char *cur = memmem_local(first, (size_t)(body_end - first), "\r\n", 2);
-    if (!cur) { free(marker); return -2; }
-    cur += 2;
-
-    // Parse part headers until blank line
-    const char *hdr_end = memmem_local(cur, (size_t)(body_end - cur), "\r\n\r\n", 4);
-    if (!hdr_end) { free(marker); return -2; }
-    size_t hdr_len = (size_t)(hdr_end - cur);
-    char *part_hdr = strndup(cur, hdr_len);
-    if (!part_hdr) { free(marker); return -1; }
-
-    // Look for filename in Content-Disposition
-    // e.g., Content-Disposition: form-data; name="file"; filename="my.jpg"
-    char *disp = strcasestr_local(part_hdr, "content-disposition:");
-    char filename[256] = {0};
-    if (disp) {
-        char *fn = strcasestr_local(disp, "filename=");
-        if (fn) {
-            fn += 9;
-            while (*fn == ' '){ fn++; }
-            if (*fn == '"') {
-                fn++;
-                char *q = strchr(fn, '"');
-                if (q) {
-                    size_t n = (size_t)(q - fn);
-                    if (n >= sizeof(filename)) n = sizeof(filename)-1;
-                    memcpy(filename, fn, n); filename[n] = '\0';
-                }
-            } else {
-                // unquoted until ; or newline
-                char *q = strpbrk(fn, ";\r\n");
-                size_t n = q ? (size_t)(q - fn) : strlen(fn);
-                if (n >= sizeof(filename)) n = sizeof(filename)-1;
-                memcpy(filename, fn, n); filename[n] = '\0';
-            }
-        }
-    }
-    free(part_hdr);
-    sanitize_filename(filename);
-
-    // Data starts after CRLFCRLF
-    const char *data = hdr_end + 4;
-
-    // Find the next boundary marker which ends this part: "\r\n--<boundary>"
-    // but we must also accept final boundary ending with "--"
-    // strategy: find "\r\n--<boundary>" from data forward
-    char *next_mark = NULL;
-    {
-        size_t pat_len = 2 + 2 + blen; // "\r\n--" + boundary
-        char *pat = malloc(pat_len + 1);
-        if (!pat) { free(marker); return -1; }
-        snprintf(pat, pat_len + 1, "\r\n--%s", boundary);
-        const char *found = memmem_local(data, (size_t)(body_end - data), pat, strlen(pat));
-        free(pat);
-        if (!found) { free(marker); return -2; }
-        next_mark = (char*)found;
-    }
-
-    size_t file_len = (size_t)(next_mark - data);
-    // Write file
-    char outpath[512];
-    snprintf(outpath, sizeof(outpath), "/photos/%s", filename[0] ? filename : "upload.bin");
-    int fd = open(outpath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
-    if (fd < 0) { free(marker); return -3; }
-    ssize_t w = write(fd, data, file_len);
-    close(fd);
-    if (w < 0 || (size_t)w != file_len) { free(marker); return -3; }
-
-    // return saved path
-    snprintf(saved_path, saved_path_sz, "%s", outpath);
-    free(marker);
-    return 0;
-}
-
 
 static char hexval(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -260,6 +139,26 @@ static const char *get_mime_type(const char *ext) {
     return "application/octet-stream";
 }
 
+// simple case-insensitive header fetch; returns malloc'd string (caller frees)
+static char *header_value_dup(const char *reqbuf, const char *name) {
+    char needle[128];
+    snprintf(needle, sizeof(needle), "\r\n%s:", name);
+    const char *p = strcasestr_local(reqbuf, needle);
+    if (!p) return NULL;
+    p += 2 + strlen(name); // skip CRLF + name
+    if (*p != ':') return NULL;
+    p++;
+    while (*p==' ' || *p=='\t') p++;
+    const char *end = strstr(p, "\r\n");
+    if (!end) return NULL;
+    size_t n = (size_t)(end - p);
+    while (n>0 && (p[n-1]==' ' || p[n-1]=='\t')) n--;
+    char *out = (char*)malloc(n+1);
+    if (!out) return NULL;
+    memcpy(out, p, n); out[n] = '\0';
+    return out;
+}
+
 // ---------- TLS IO helpers ----------
 static int ssl_write_all(SSL *ssl, const void *buf, size_t len) {
     const unsigned char *p = (const unsigned char*)buf;
@@ -283,6 +182,13 @@ static int ssl_read_some(SSL *ssl, void *buf, size_t cap) {
         return -1; // closed/error
     }
     return n;
+}
+
+static void ensure_photos_dir(void) {
+    struct stat st;
+    if (stat(PHOTOS_DIR, &st) == -1) {
+        mkdir(PHOTOS_DIR, 0755);
+    }
 }
 
 // ---------- HTTP helpers ----------
@@ -357,10 +263,6 @@ static int send_header_tls(SSL *ssl, int status, const char *status_text,
     return ssl_write_all(ssl, header, (size_t)n);
 }
 
-static int __attribute__((unused)) send_simple_body_tls(SSL *ssl, const char *body) {
-    return ssl_write_all(ssl, body, strlen(body));
-}
-
 static int send_simple_response_tls(SSL *ssl, int status, const char *status_text,
                                 const char *content_type, const char *body,
                                 int keep_alive, const char *extra_headers) {
@@ -399,6 +301,20 @@ static int redirect_to_tls(SSL *ssl, const char *location, int keep) {
     snprintf(hdr, sizeof(hdr), "Location: %s\r\n", location);
     return send_simple_response_tls(ssl, 302, "Found",
                                 "text/plain; charset=utf-8", "Redirecting...", keep, hdr);
+}
+
+static int write_all_fd(int fd, const void *buf, size_t len) {
+    const unsigned char *p = (const unsigned char*)buf;
+    while (len) {
+        ssize_t n = write(fd, p, len);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        p   += (size_t)n;
+        len -= (size_t)n;
+    }
+    return 0;
 }
 
 // ---------- client handler ----------
@@ -517,80 +433,120 @@ static void *handle_client(void *argp) {
             if (!keep) break; else continue;
         }
 
-		int is_head = !strcasecmp(method, "HEAD");
-		int is_get  = !strcasecmp(method, "GET");
-		int is_post = !strcasecmp(method, "POST");
+        int is_head = !strcasecmp(method, "HEAD");
+        int is_get  = !strcasecmp(method, "GET");
+        int is_post = !strcasecmp(method, "POST");
 
-		// --- NEW: handle POST /upload (after login) ---
-		if (is_post && !strcmp(uri, "/upload")) {
-			// Require Content-Length and reasonable size
-			if (content_len <= 0 || content_len > MAX_UPLOAD) {
-				send_simple_response_tls(ssl, 413, "Payload Too Large","text/plain; charset=utf-8", "Payload Too Large or missing Content-Length", keep, NULL);
-				if (!keep) break; else continue;
-			}
-			// Content-Type must be multipart/form-data
-			int is_multipart = 0;
-			char *boundary = NULL;
-			const char *ctype_line = strcasestr_local(reqbuf, "\r\nContent-Type:");
-			if (ctype_line) {
-				const char *line_end = strstr(ctype_line + 2, "\r\n");
-				size_t len = line_end ? (size_t)(line_end - (ctype_line + 15)) : strlen(ctype_line + 15);
-				char *val = strndup(ctype_line + 15, len);
-				if (val) {
-					for (char *q = val; *q; ++q) *q = tolower((unsigned char)*q);
-					if (strstr(val, "multipart/form-data")) {
-						is_multipart = 1;
-						boundary = extract_boundary(val);
+        // --- RAW UPLOAD: POST /upload-raw ---
+        if (is_post && !strcmp(uri, "/upload-raw")) {
+            if (content_len <= 0 || content_len > MAX_UPLOAD) {
+                send_simple_response_tls(ssl, 413, "Payload Too Large",
+                    "text/plain; charset=utf-8", "Bad or missing Content-Length", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+            char *ctype = header_value_dup(reqbuf, "Content-Type");
+            int ok_type = 0;
+			if (ctype) {
+				if (!strncasecmp(ctype, "application/octet-stream", 24)) ok_type = 1;
+				else if (!strncasecmp(ctype, "image/", 6)) ok_type = 1;
+				else if (!strncasecmp(ctype, "video/", 6)) ok_type = 1;
+				}
+            free(ctype);
+            if (!ok_type) {
+                send_simple_response_tls(ssl, 415, "Unsupported Media Type",
+                    "text/plain; charset=utf-8", "Use application/octet-stream", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+            char fname[256] = {0};
+            char *xfn = header_value_dup(reqbuf, "X-Filename");
+            if (xfn && *xfn) {
+                size_t n = strlen(xfn);
+                if (n >= sizeof(fname)) n = sizeof(fname)-1;
+                memcpy(fname, xfn, n); fname[n] = '\0';
+            } else strcpy(fname, "upload.bin");
+            free(xfn);
+            sanitize_filename(fname);
+
+            char outpath[512];
+			snprintf(outpath, sizeof(outpath), "%s/%s", PHOTOS_DIR, fname);
+			int fd = open(outpath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            if (fd < 0) {
+                send_simple_response_tls(ssl, 500, "Internal Server Error",
+                    "text/plain; charset=utf-8", "Cannot open output file", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+
+
+
+
+            // bytes of body already present in reqbuf
+			size_t preloaded = 0;
+			if (hdr_end && content_len > 0) {
+				size_t inbuf = (size_t)(req_len - (hdr_end + 4 - reqbuf));
+				if (inbuf > (size_t)content_len) inbuf = (size_t)content_len;
+				if (inbuf) {
+					if (write_all_fd(fd, body, inbuf) < 0) {
+						close(fd);
+						send_simple_response_tls(ssl, 500, "Internal Server Error",
+							"text/plain; charset=utf-8", "Write failed", keep, NULL);
+						if (!keep) break; else continue;
+						continue;
 					}
-					// NOTE: extract_boundary expects original case too; but we lowercased.
-					// It still works as it looks for "boundary=" case-insensitively and copies the value.
-					free(val);
+					preloaded = inbuf;
 				}
 			}
-			if (!is_multipart || !boundary) {
-				free(boundary);
-        send_simple_response_tls(ssl, 415, "Unsupported Media Type",
-					"text/plain; charset=utf-8", "Use multipart/form-data for /upload", keep, NULL);
-				if (!keep) break; else continue;
+
+			// stream the rest from TLS
+			size_t remaining = (size_t)content_len - preloaded;
+			char ibuf[8192];
+			while (remaining > 0) {
+				size_t want = remaining < sizeof(ibuf) ? remaining : sizeof(ibuf);
+				int rn = SSL_read(ssl, ibuf, (int)want);
+				if (rn <= 0) {
+					int err = SSL_get_error(ssl, rn);
+					if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) continue;
+					close(fd);
+					send_simple_response_tls(ssl, 500, "Internal Server Error","text/plain; charset=utf-8", "Client disconnected while uploading", keep, NULL);
+					if (!keep) break; else continue; 
+				}
+				if (write_all_fd(fd, ibuf, (size_t)rn) < 0) {
+					close(fd);
+					send_simple_response_tls(ssl, 500, "Internal Server Error",
+				"text/plain; charset=utf-8", "Write failed", keep, NULL);
+					if (!keep) break; else continue;
+				}
+				remaining -= (size_t)rn;
 			}
+            close(fd);
 
-			// Body pointer/length were already captured
-			char saved[512] = {0};
-			int rc = save_single_part_to_photos(body, content_len, boundary, saved, sizeof(saved));
-			free(boundary);
-		
-			if (rc == 0) {
-				char json[1024];
-				int n = snprintf(json, sizeof(json), "{ \"ok\": true, \"path\": \"%s\" }\n", saved);
-				if (send_header_tls(ssl, 201, "Created", "application/json; charset=utf-8", n, keep, NULL) < 0) { if (!keep) break; else continue; }
-				ssl_write_all(ssl, json, (size_t)n);
-			} 
-			else if (rc == -3) {
-				send_simple_response_tls(ssl, 500, "Internal Server Error",
-					"text/plain; charset=utf-8", "Failed to write file", keep, NULL);
-			} 
-			else {
-				send_simple_response_tls(ssl, 400, "Bad Request",
-					"text/plain; charset=utf-8", "Malformed multipart body", keep, NULL);
-			}
-			if (!keep) break; else continue;
-		}
+            char json[320];
+            int n = snprintf(json, sizeof(json), "{ \"ok\": true, \"path\": \"%s\" }\n", outpath);
+            if (send_header_tls(ssl, 201, "Created", "application/json; charset=utf-8", n, keep, NULL) >= 0) {
+                ssl_write_all(ssl, json, (size_t)n);
+            }
+            if (!keep) break; else continue;
+        }
 
-		// For everything else: only allow GET/HEAD as before
-		if (!is_get && !is_head) {
-			send_simple_response_tls(ssl, 405, "Method Not Allowed","text/plain; charset=utf-8","405 Method Not Allowed", keep, NULL);
-			if (!keep) break; else continue;
-		}
-
+        // Everything else: only GET/HEAD as before
+        if (!is_get && !is_head) {
+            send_simple_response_tls(ssl, 405, "Method Not Allowed",
+                "text/plain; charset=utf-8", "405 Method Not Allowed", keep, NULL);
+            if (!keep) break; else continue;
+        }
 
         const char *raw = (uri[0] == '/') ? uri + 1 : uri;
         if (strstr(raw, "..")) {
-            send_simple_response_tls(ssl, 403, "Forbidden","text/plain; charset=utf-8","403 Forbidden", keep, NULL);
+            send_simple_response_tls(ssl, 403, "Forbidden",
+                "text/plain; charset=utf-8", "403 Forbidden", keep, NULL);
             if (!keep) break; else continue;
         }
         char *decoded = url_decode(raw);
         if (!decoded) {
-            send_simple_response_tls(ssl, 500, "Internal Server Error","text/plain; charset=utf-8","500 Internal Server Error", keep, NULL);
+            send_simple_response_tls(ssl, 500, "Internal Server Error",
+                "text/plain; charset=utf-8", "500 Internal Server Error", keep, NULL);
             if (!keep) break; else continue;
         }
 
@@ -606,11 +562,13 @@ static void *handle_client(void *argp) {
                 const char *mime = get_mime_type(ext);
                 send_header_tls(ssl, 200, "OK", mime, (long)st.st_size, keep, NULL);
             } else {
-                send_simple_response_tls(ssl, 404, "Not Found","text/plain; charset=utf-8","404 Not Found", keep, NULL);
+                send_simple_response_tls(ssl, 404, "Not Found",
+                    "text/plain; charset=utf-8", "404 Not Found", keep, NULL);
             }
         } else {
             if (send_file_response_tls(ssl, path, keep) < 0) {
-                send_simple_response_tls(ssl, 404, "Not Found","text/plain; charset=utf-8","404 Not Found", keep, NULL);
+                send_simple_response_tls(ssl, 404, "Not Found",
+                    "text/plain; charset=utf-8", "404 Not Found", keep, NULL);
             }
         }
         if (!keep) break;
@@ -624,7 +582,7 @@ static void *handle_client(void *argp) {
 }
 
 void configure_context(SSL_CTX *context){
-	if (SSL_CTX_use_certificate_file(context, CERT_FILE, SSL_FILETYPE_PEM) <= 0)
+    if (SSL_CTX_use_certificate_file(context, CERT_FILE, SSL_FILETYPE_PEM) <= 0)
         die("Failed to load certificate %s", CERT_FILE);
     if (SSL_CTX_use_PrivateKey_file(context, KEY_FILE, SSL_FILETYPE_PEM) <= 0)
         die("Failed to load private key %s", KEY_FILE);
@@ -635,24 +593,17 @@ void configure_context(SSL_CTX *context){
 // ---------- server bootstrap ----------
 int main() {
     signal(SIGPIPE, SIG_IGN);
-    /*if (argc < 4) {
-        fprintf(stderr, "Usage: %s <port> <server.crt> <server.key>\n", argv[0]);
-        return 1;
-    }*/
+
     int port = 8080;
-    
 
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx) die("SSL_CTX_new failed");
 
-	configure_context(ctx);
-    // Reasonable defaults
+    configure_context(ctx);
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
     SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
-
-    
 
     int s = socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) die("socket: %s", strerror(errno));
@@ -673,7 +624,8 @@ int main() {
     printf("Serving HTTPS (login-gated) on 0.0.0.0:%d\n", port);
     printf("Use certificate: %s\n", CERT_FILE);
     printf("Password defaults to 'password' (override with APP_PASSWORD)\n");
-
+	ensure_photos_dir();
+	
     while (1) {
         struct sockaddr_in cli; socklen_t clilen = sizeof(cli);
         int c = accept(s, (struct sockaddr*)&cli, &clilen);

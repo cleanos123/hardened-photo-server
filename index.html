@@ -4,6 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Photo Uploader</title>
+
+  <!-- Point all relative links (/, /upload-raw, /photos.html) to your server -->
+  <base href="https://localhost:8080/">
+
   <style>
     :root { --bg:#0f172a; --card:#111827; --text:#e5e7eb; --muted:#9ca3af; --accent:#38bdf8; }
     * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif; }
@@ -45,19 +49,19 @@
   <main class="card">
     <h1>Upload Photos</h1>
     <div class="top-links">
-      <!-- link now points to /photos.html -->
       <a href="/photos.html">→ View Photos</a>
     </div>
-    <p>Select images to upload. This page shows a preview and will POST to <code>/upload</code> when you click Upload.</p>
+    <p>Select images to upload. This page will POST each file as raw bytes to <code>/upload-raw</code>.</p>
 
-    <form id="form" action="/upload" method="POST" enctype="multipart/form-data" onsubmit="return confirmSubmit(event)">
+    <!-- No action/method/enctype: we intercept submit and use fetch() -->
+    <form id="form">
       <div id="drop" class="drop" tabindex="0">
         <div>
           <div style="font-size:15px;margin-bottom:4px">Drag &amp; drop files here</div>
           <div class="meta">or</div>
           <label class="cta" for="file">Choose files</label>
-          <input id="file" name="files" type="file" multiple accept="image/*">
-          <div class="hint">Accepted: images • Max shown here: 10MB/file (client-side)</div>
+          <input id="file" name="files" type="file" multiple accept="image/*,video/*">
+          <div class="hint">Accepted: images • Max shown here: 200MB/file (client-side)</div>
         </div>
       </div>
 
@@ -66,13 +70,13 @@
       <div class="actions">
         <button type="button" class="btn" onclick="clearSelection()">Clear</button>
         <button type="submit" class="btn primary">Upload</button>
-        <!-- button now does a GET /photos.html -->
         <a class="btnlink" href="/photos.html">View Photos</a>
       </div>
     </form>
   </main>
 
   <script>
+    const form = document.getElementById('form');
     const drop = document.getElementById('drop');
     const input = document.getElementById('file');
     const list = document.getElementById('list');
@@ -134,10 +138,29 @@
       list.innerHTML = '';
     }
 
-    function confirmSubmit(e) {
-      if (!files.length) { alert('Choose at least one file.'); e.preventDefault(); return false; }
-      return true; // native form posts to /upload
-    }
+    // Submit handler: send each file as raw bytes to /upload-raw
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!files.length) { alert('Choose at least one file.'); return; }
+
+      for (const f of files) {
+        const res = await fetch('/upload-raw', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Filename': f.name
+          },
+          body: await f.arrayBuffer()
+        });
+        if (!res.ok) {
+          const t = await res.text().catch(()=> '');
+          alert(`Upload failed for ${f.name}: ${res.status} ${res.statusText}\n${t}`);
+          return;
+        }
+      }
+      alert('Upload complete!');
+      clearSelection();
+    });
   </script>
 </body>
 </html>

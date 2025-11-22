@@ -600,6 +600,12 @@ static void *handle_client(void *argp) {
         if (decoded[0] == '\0') snprintf(path, sizeof(path), "index.html");
         else snprintf(path, sizeof(path), "%s", decoded);
         free(decoded);
+		
+		if (!strncmp(path, "photos/", 7)) {
+			char mapped[4096];
+			snprintf(mapped, sizeof(mapped), "%s/%s", PHOTOS_DIR, path + 7);
+			snprintf(path, sizeof(path), "%s", mapped);
+		}
 
         if (is_head) {
             struct stat st;

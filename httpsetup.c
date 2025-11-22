@@ -447,6 +447,7 @@ static void *handle_client(void *argp) {
 
             char *ctype = header_value_dup(reqbuf, "Content-Type");
             int ok_type = 0;
+			
 			if (ctype) {
 				if (!strncasecmp(ctype, "application/octet-stream", 24)) ok_type = 1;
 				else if (!strncasecmp(ctype, "image/", 6)) ok_type = 1;

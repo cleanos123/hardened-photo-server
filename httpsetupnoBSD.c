@@ -679,20 +679,9 @@ void configure_context(SSL_CTX *context){
 // ---------- server bootstrap ----------
 int main() {
     signal(SIGPIPE, SIG_IGN);
-	#ifdef __OpenBSD__
-    /* Whitelist filesystem access */
-	printf("RUNNING OpenBSD\n");
-    if (unveil("/mnt/newdisk/photos", "rwc") == -1) die("unveil photos");  /* uploads dir */
-    if (unveil(".", "r") == -1)                    die("unveil cwd");      /* certs, html in cwd */
-    if (unveil(NULL, NULL) == -1)                  die("unveil lock");
-
-    /* Restrict syscalls for runtime */
-    if (pledge("stdio rpath wpath cpath inet", NULL) == -1)
-        die("pledge");
-	#endif
 
     int port = 8080;
-	
+
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
     SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());

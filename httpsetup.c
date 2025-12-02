@@ -81,12 +81,26 @@ struct my_jpeg_error {
 static void my_jpeg_error_exit(j_common_ptr cinfo)
 {
     struct my_jpeg_error *myerr = (struct my_jpeg_error *) cinfo->err;
-
+	
     // Optional: still print the libjpeg error message
     (*cinfo->err->output_message)(cinfo);
 
     // Jump back to the setjmp point in sanitize_jpeg()
     longjmp(myerr->setjmp_buffer, 1);
+}
+
+static void my_emit_message(j_common_ptr cinfo, int msg_level)
+{
+    struct my_jpeg_error *myerr = (struct my_jpeg_error *) cinfo->err;
+
+    // Print the warning/error message
+    (*cinfo->err->output_message)(cinfo);
+
+    if (msg_level < 0) {
+        // libjpeg uses msg_level < 0 for warnings
+        longjmp(myerr->setjmp_buffer, 1);
+    }
+    // msg_level >= 0 are trace/debug, ignore if you like
 }
 
 // ---------- async logger ----------
@@ -210,7 +224,9 @@ static int sanitize_jpeg(const char *inpath, const char *outpath) {
 
     // Set up error handler *before* any other libjpeg calls
     dinfo.err = jpeg_std_error(&jerr.pub);
-    jerr.pub.error_exit = my_jpeg_error_exit;
+	jerr.pub.error_exit  = my_jpeg_error_exit;
+	jerr.pub.emit_message = my_emit_message;
+
 
     if (setjmp(jerr.setjmp_buffer)) {
         // Any libjpeg fatal error jumps here
@@ -249,8 +265,10 @@ static int sanitize_jpeg(const char *inpath, const char *outpath) {
     }
 
     // ---- Compress side ----
-    cinfo.err = jpeg_std_error(&jerr.pub);   // share same error handler
-    jerr.pub.error_exit = my_jpeg_error_exit;
+    cinfo.err = jpeg_std_error(&jerr.pub);
+	jerr.pub.error_exit  = my_jpeg_error_exit;
+	jerr.pub.emit_message = my_emit_message;
+
 
     jpeg_create_compress(&cinfo);
     got_compress = 1;
@@ -848,6 +866,7 @@ static void *handle_client(void *argp) {
 
             if (sanitize_jpeg(tmppath, outpath) != 0) {
                 unlink(tmppath);
+				log_msg("%s sanitize FAILED for %s", ip, fname);
                 send_simple_response_tls(ssl, 500, "Internal Server Error",
                     "text/plain; charset=utf-8",
                     "Failed to sanitize uploaded image", keep, NULL);
@@ -855,7 +874,6 @@ static void *handle_client(void *argp) {
             }
 
             unlink(tmppath);  // temp file no longer needed
-			
 			log_msg("%s triggered sanitize on %s (%ld bytes)", ip, fname, content_len);
 
             write_index_json(PHOTOS_DIR);

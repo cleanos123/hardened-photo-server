@@ -857,32 +857,58 @@ static void *handle_client(void *argp) {
 
             // validate and sanitize (JPEG only) ---
 
+			// sniff file header to see if it is really JPEG (1) or not (0)
 			int img_type = sniff_image_type(tmppath);
 
+			// Decide if the client *claimed* this was JPEG
+			int looks_jpeg = 0;
+			if (ctype && !strncasecmp(ctype, "image/jpeg", 10))
+				looks_jpeg = 1;
+			else {
+				const char *dot = strrchr(fname, '.');
+				if (dot) {
+					if (!strcasecmp(dot, ".jpg") ||
+						!strcasecmp(dot, ".jpeg") ||
+						!strcasecmp(dot, ".jfif"))
+						looks_jpeg = 1;
+				}
+			}
+
 			if (img_type == 1) {
-				// JPEG → run sanitizer into final output path
+				// *** Real JPEG: run through sanitizer ***
 				if (sanitize_jpeg(tmppath, outpath) != 0) {
 					unlink(tmppath);
+					log_msg("%s sanitize FAILED for %s", ip, fname);
 					send_simple_response_tls(ssl, 500, "Internal Server Error",
 						"text/plain; charset=utf-8",
 						"Failed to sanitize uploaded JPEG image", keep, NULL);
 					if (!keep) break; else continue;
 				}
-				// sanitizer wrote the cleaned JPEG to outpath
-				unlink(tmppath);  // temp file no longer needed
+				unlink(tmppath);  // sanitizer wrote cleaned JPEG to outpath
+				log_msg("%s sanitize OK on %s (%ld bytes)", ip, fname, content_len);
 			} else {
-				// NOT a JPEG (e.g. PNG, video/mp4, video/webm, etc.)
-				// We just store the file raw → move temp file to final location.
+				if (looks_jpeg) {
+					// *** Claimed JPEG but header is not JPEG → reject as corrupted ***
+					unlink(tmppath);
+					log_msg("%s rejected corrupted JPEG %s", ip, fname);
+					send_simple_response_tls(ssl, 415, "Unsupported Media Type",
+						"text/plain; charset=utf-8",
+						"Corrupted or unsupported JPEG image", keep, NULL);
+					if (!keep) break; else continue;
+				}
+
+				// *** Not JPEG and doesn't look like it was supposed to be JPEG:
+				//     accept as generic image/video/binary and just move it. ***
 				if (rename(tmppath, outpath) != 0) {
 					unlink(tmppath);
+					log_msg("%s failed to store non-JPEG file %s", ip, fname);
 					send_simple_response_tls(ssl, 500, "Internal Server Error",
 						"text/plain; charset=utf-8",
 						"Failed to store uploaded file", keep, NULL);
 					if (!keep) break; else continue;
-				}	
+				}
+				log_msg("%s stored non-JPEG file %s (%ld bytes)", ip, fname, content_len);
 			}
-
-			log_msg("%s triggered sanitize on %s (%ld bytes)", ip, fname, content_len);
 
             write_index_json(PHOTOS_DIR);
             char json[320];

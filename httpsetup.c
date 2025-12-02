@@ -72,6 +72,22 @@ static void die(const char *fmt, ...) {
     exit(1);
 }
 
+struct my_jpeg_error {
+    struct jpeg_error_mgr pub;   // "public" fields (must be first)
+    jmp_buf setjmp_buffer;
+};
+
+static void my_jpeg_error_exit(j_common_ptr cinfo)
+{
+    struct my_jpeg_error *myerr = (struct my_jpeg_error *) cinfo->err;
+
+    // Optional: still print the libjpeg error message
+    (*cinfo->err->output_message)(cinfo);
+
+    // Jump back to the setjmp point in sanitize_jpeg()
+    longjmp(myerr->setjmp_buffer, 1);
+}
+
 // ---------- async logger ----------
 
 struct log_item {
@@ -179,43 +195,65 @@ static int sniff_image_type(const char *path) {
  * Returns 0 on success, -1 on error.
  */
 static int sanitize_jpeg(const char *inpath, const char *outpath) {
-    FILE *in = fopen(inpath, "rb");
+    FILE *in = NULL;
+    FILE *out = NULL;
+    struct jpeg_decompress_struct dinfo;
+    struct jpeg_compress_struct   cinfo;
+    struct my_jpeg_error jerr;
+    int got_decompress = 0;
+    int got_compress   = 0;
+    int rc = -1;  // assume failure
+
+    in = fopen(inpath, "rb");
     if (!in) return -1;
 
-    struct jpeg_decompress_struct dinfo;
-    struct jpeg_error_mgr jerr;
-    dinfo.err = jpeg_std_error(&jerr);
+    // Set up error handler *before* any other libjpeg calls
+    dinfo.err = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit = my_jpeg_error_exit;
+
+    if (setjmp(jerr.setjmp_buffer)) {
+        // Any libjpeg fatal error jumps here
+        if (got_compress)   jpeg_destroy_compress(&cinfo);
+        if (got_decompress) jpeg_destroy_decompress(&dinfo);
+        if (in)  fclose(in);
+        if (out) { fclose(out); unlink(outpath); }
+        return -1;
+    }
+
+    // ---- Decompress side ----
     jpeg_create_decompress(&dinfo);
+    got_decompress = 1;
+
     jpeg_stdio_src(&dinfo, in);
 
     if (jpeg_read_header(&dinfo, TRUE) != JPEG_HEADER_OK) {
-        jpeg_destroy_decompress(&dinfo);
-        fclose(in);
-        return -1;
+        // will hit setjmp cleanup via longjmp if libjpeg dies inside
+        goto done;
     }
 
     // Decode to RGB
     dinfo.out_color_space = JCS_RGB;
     jpeg_start_decompress(&dinfo);
+
     int w  = (int)dinfo.output_width;
     int h  = (int)dinfo.output_height;
-    int ch = (int)dinfo.output_components;   // should be 3 for RGB
+    int ch = (int)dinfo.output_components;   // should be 3
 
     JSAMPARRAY buffer = (*dinfo.mem->alloc_sarray)
         ((j_common_ptr)&dinfo, JPOOL_IMAGE, (JDIMENSION)(w * ch), 1);
 
-    FILE *out = fopen(outpath, "wb");
+    out = fopen(outpath, "wb");
     if (!out) {
-        jpeg_finish_decompress(&dinfo);
-        jpeg_destroy_decompress(&dinfo);
-        fclose(in);
-        return -1;
+        goto done;
     }
 
-    struct jpeg_compress_struct cinfo;
-    struct jpeg_error_mgr cjerr;
-    cinfo.err = jpeg_std_error(&cjerr);
+    // ---- Compress side ----
+    cinfo.err = jpeg_std_error(&jerr.pub);   // share same error handler
+    jerr.pub.error_exit = my_jpeg_error_exit;
+
     jpeg_create_compress(&cinfo);
+    got_compress = 1;
+
     jpeg_stdio_dest(&cinfo, out);
 
     cinfo.image_width      = w;
@@ -234,18 +272,24 @@ static int sanitize_jpeg(const char *inpath, const char *outpath) {
     }
 
     jpeg_finish_compress(&cinfo);
-    jpeg_destroy_compress(&cinfo);
-
     jpeg_finish_decompress(&dinfo);
-    jpeg_destroy_decompress(&dinfo);
 
-    fclose(in);
-    fclose(out);
+    rc = 0;  // success
 
-    // We never copy EXIF/XMP/etc → metadata is dropped.
-    return 0;
+done:
+    if (got_compress)   jpeg_destroy_compress(&cinfo);
+    if (got_decompress) jpeg_destroy_decompress(&dinfo);
+
+    if (in)  fclose(in);
+    if (out) fclose(out);
+
+    if (rc != 0) {
+        // delete partial output on failure
+        unlink(outpath);
+    }
+
+    return rc;
 }
-
 
 static char *strcasestr_local(const char *haystack, const char *needle) {
     if (!*needle) return (char*)haystack;

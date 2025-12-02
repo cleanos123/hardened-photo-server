@@ -18,7 +18,7 @@ fi
 
 # 2. Compile the HTTPS server
 echo "[*] Compiling..."
-egcc -O2 -pthread -Wall -Wextra -o "$OUT" "$SRC" -lssl -lcrypto
+egcc -O2 -pthread -Wall -Wextra -o "$OUT" "$SRC" -lssl -lcrypto -ljpeg
 if [ $? -ne 0 ]; then
     echo "[!] Build failed."
     exit 1

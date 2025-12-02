@@ -855,25 +855,33 @@ static void *handle_client(void *argp) {
 
             // --- Sniff & sanitize ---
 
-            int img_type = sniff_image_type(tmppath);
-            if (img_type != 1) {  // for now: only accept JPEG
-                unlink(tmppath);
-                send_simple_response_tls(ssl, 415, "Unsupported Media Type",
-                    "text/plain; charset=utf-8",
-                    "Only JPEG images are supported", keep, NULL);
-                if (!keep) break; else continue;
-            }
+            // validate and sanitize (JPEG only) ---
 
-            if (sanitize_jpeg(tmppath, outpath) != 0) {
-                unlink(tmppath);
-				log_msg("%s sanitize FAILED for %s", ip, fname);
-                send_simple_response_tls(ssl, 500, "Internal Server Error",
-                    "text/plain; charset=utf-8",
-                    "Failed to sanitize uploaded image", keep, NULL);
-                if (!keep) break; else continue;
-            }
+			int img_type = sniff_image_type(tmppath);
 
-            unlink(tmppath);  // temp file no longer needed
+			if (img_type == 1) {
+				// JPEG → run sanitizer into final output path
+				if (sanitize_jpeg(tmppath, outpath) != 0) {
+					unlink(tmppath);
+					send_simple_response_tls(ssl, 500, "Internal Server Error",
+						"text/plain; charset=utf-8",
+						"Failed to sanitize uploaded JPEG image", keep, NULL);
+					if (!keep) break; else continue;
+				}
+				// sanitizer wrote the cleaned JPEG to outpath
+				unlink(tmppath);  // temp file no longer needed
+			} else {
+				// NOT a JPEG (e.g. PNG, video/mp4, video/webm, etc.)
+				// We just store the file raw → move temp file to final location.
+				if (rename(tmppath, outpath) != 0) {
+					unlink(tmppath);
+					send_simple_response_tls(ssl, 500, "Internal Server Error",
+						"text/plain; charset=utf-8",
+						"Failed to store uploaded file", keep, NULL);
+					if (!keep) break; else continue;
+				}	
+			}
+
 			log_msg("%s triggered sanitize on %s (%ld bytes)", ip, fname, content_len);
 
             write_index_json(PHOTOS_DIR);

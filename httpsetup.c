@@ -20,6 +20,7 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <setjmp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>

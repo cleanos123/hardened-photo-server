@@ -37,6 +37,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <jpeglib.h>
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -70,6 +71,181 @@ static void die(const char *fmt, ...) {
     fputc('\n', stderr);
     exit(1);
 }
+
+// ---------- async logger ----------
+
+struct log_item {
+    char *msg;
+    struct log_item *next;
+};
+
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  log_cond  = PTHREAD_COND_INITIALIZER;
+static struct log_item *log_head = NULL;
+static struct log_item *log_tail = NULL;
+static int log_done = 0; // set to 1 if you ever want to cleanly stop the logger
+
+static void enqueue_log(const char *s) {
+    struct log_item *item = malloc(sizeof(*item));
+    if (!item) return;
+    item->msg = strdup(s);
+    if (!item->msg) { free(item); return; }
+    item->next = NULL;
+
+    pthread_mutex_lock(&log_mutex);
+    if (log_tail) log_tail->next = item;
+    else          log_head = item;
+    log_tail = item;
+    pthread_cond_signal(&log_cond);
+    pthread_mutex_unlock(&log_mutex);
+}
+
+// Public logging function: call this from any thread.
+void log_msg(const char *fmt, ...) {
+    char buf[1024];
+
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    // Optionally add timestamp here if you like:
+    time_t now = time(NULL);
+    struct tm tm;
+    localtime_r(&now, &tm);
+    char tbuf[64];
+    strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", &tm);
+    char line[1152];
+    snprintf(line, sizeof(line), "[%s] %s", tbuf, buf);
+    enqueue_log(line);
+    enqueue_log(buf);
+}
+
+static void *logger_thread(void *arg) {
+    (void)arg;
+
+    FILE *f = fopen("server.log", "a");
+    if (!f) f = stderr;
+
+    pthread_mutex_lock(&log_mutex);
+    for (;;) {
+        while (!log_head && !log_done)
+            pthread_cond_wait(&log_cond, &log_mutex);
+
+        if (log_done && !log_head)
+            break;
+
+        struct log_item *item = log_head;
+        log_head = item->next;
+        if (!log_head) log_tail = NULL;
+
+        pthread_mutex_unlock(&log_mutex);
+
+        fprintf(f, "%s\n", item->msg);
+        fflush(f);
+
+        free(item->msg);
+        free(item);
+
+        pthread_mutex_lock(&log_mutex);
+    }
+    pthread_mutex_unlock(&log_mutex);
+
+    if (f != stderr)
+        fclose(f);
+    return NULL;
+}
+
+// --- image helpers ---
+
+// Return 0 = unknown/unsupported, 1 = JPEG
+static int sniff_image_type(const char *path) {
+    unsigned char buf[16];
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    ssize_t n = read(fd, buf, sizeof(buf));
+    close(fd);
+    if (n < 3) return 0;
+
+    // JPEG magic: FF D8 FF
+    if (buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF)
+        return 1;
+
+    // later you can add PNG/WebP/etc
+    return 0;
+}
+
+/* Re-encode a JPEG with libjpeg, dropping all metadata.
+ * Returns 0 on success, -1 on error.
+ */
+static int sanitize_jpeg(const char *inpath, const char *outpath) {
+    FILE *in = fopen(inpath, "rb");
+    if (!in) return -1;
+
+    struct jpeg_decompress_struct dinfo;
+    struct jpeg_error_mgr jerr;
+    dinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_decompress(&dinfo);
+    jpeg_stdio_src(&dinfo, in);
+
+    if (jpeg_read_header(&dinfo, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&dinfo);
+        fclose(in);
+        return -1;
+    }
+
+    // Decode to RGB
+    dinfo.out_color_space = JCS_RGB;
+    jpeg_start_decompress(&dinfo);
+    int w  = (int)dinfo.output_width;
+    int h  = (int)dinfo.output_height;
+    int ch = (int)dinfo.output_components;   // should be 3 for RGB
+
+    JSAMPARRAY buffer = (*dinfo.mem->alloc_sarray)
+        ((j_common_ptr)&dinfo, JPOOL_IMAGE, (JDIMENSION)(w * ch), 1);
+
+    FILE *out = fopen(outpath, "wb");
+    if (!out) {
+        jpeg_finish_decompress(&dinfo);
+        jpeg_destroy_decompress(&dinfo);
+        fclose(in);
+        return -1;
+    }
+
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr cjerr;
+    cinfo.err = jpeg_std_error(&cjerr);
+    jpeg_create_compress(&cinfo);
+    jpeg_stdio_dest(&cinfo, out);
+
+    cinfo.image_width      = w;
+    cinfo.image_height     = h;
+    cinfo.input_components = ch;
+    cinfo.in_color_space   = JCS_RGB;
+
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, 85, TRUE); // adjust as you like
+
+    jpeg_start_compress(&cinfo, TRUE);
+
+    while (dinfo.output_scanline < dinfo.output_height) {
+        jpeg_read_scanlines(&dinfo, buffer, 1);
+        jpeg_write_scanlines(&cinfo, buffer, 1);
+    }
+
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+
+    jpeg_finish_decompress(&dinfo);
+    jpeg_destroy_decompress(&dinfo);
+
+    fclose(in);
+    fclose(out);
+
+    // We never copy EXIF/XMP/etc → metadata is dropped.
+    return 0;
+}
+
 
 static char *strcasestr_local(const char *haystack, const char *needle) {
     if (!*needle) return (char*)haystack;
@@ -378,12 +554,16 @@ static int write_index_json(const char *dir) {
 struct client_arg {
     int fd;
     SSL_CTX *ctx;
+	char ip[64];
 };
 
 static void *handle_client(void *argp) {
     struct client_arg *arg = (struct client_arg*)argp;
     int client_fd = arg->fd;
     SSL_CTX *ctx = arg->ctx;
+	char ip[64];
+	strncpy(ip, arg->ip, sizeof(ip));
+	ip[sizeof(ip) - 1] = '\0';
     free(arg);
 
     int one = 1;
@@ -540,13 +720,20 @@ static void *handle_client(void *argp) {
             sanitize_filename(fname);
 
             char outpath[512];
-			snprintf(outpath, sizeof(outpath), "%s/%s", PHOTOS_DIR, fname);
-			int fd = open(outpath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            char tmppath[512];
+
+            snprintf(outpath, sizeof(outpath), "%s/%s", PHOTOS_DIR, fname);
+            // temp file in same dir so rename() (if used later) would be atomic
+            snprintf(tmppath, sizeof(tmppath), "%s/.upload-%ld.tmp",
+                     PHOTOS_DIR, (long)getpid());
+
+            int fd = open(tmppath, O_CREAT | O_WRONLY | O_TRUNC, 0644);
             if (fd < 0) {
                 send_simple_response_tls(ssl, 500, "Internal Server Error",
-                    "text/plain; charset=utf-8", "Cannot open output file", keep, NULL);
+                    "text/plain; charset=utf-8", "Cannot open temp file", keep, NULL);
                 if (!keep) break; else continue;
             }
+
 
 
 
@@ -592,19 +779,47 @@ static void *handle_client(void *argp) {
 				wrote += (size_t)rn;
 				remaining -= (size_t)rn;
 			}
-			if (wrote != (size_t)content_len) {
-			// didn’t write the full file → treat as failure
-			unlink(outpath);  // optional: avoid leaving partial files
-			send_simple_response_tls(ssl, 500, "Internal Server Error","text/plain; charset=utf-8", "Short write (upload incomplete)", keep, NULL);
-			if (!keep) break; else continue;
-}
-			fsync(fd);
+			            if (wrote != (size_t)content_len) {
+                // didn’t write the full file → treat as failure
+                unlink(tmppath);  // avoid leaving partial files
+                send_simple_response_tls(ssl, 500, "Internal Server Error",
+                    "text/plain; charset=utf-8", "Short write (upload incomplete)", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+            fsync(fd);
             close(fd);
+
+            // --- Sniff & sanitize ---
+
+            int img_type = sniff_image_type(tmppath);
+            if (img_type != 1) {  // for now: only accept JPEG
+                unlink(tmppath);
+                send_simple_response_tls(ssl, 415, "Unsupported Media Type",
+                    "text/plain; charset=utf-8",
+                    "Only JPEG images are supported", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+            if (sanitize_jpeg(tmppath, outpath) != 0) {
+                unlink(tmppath);
+                send_simple_response_tls(ssl, 500, "Internal Server Error",
+                    "text/plain; charset=utf-8",
+                    "Failed to sanitize uploaded image", keep, NULL);
+                if (!keep) break; else continue;
+            }
+
+            unlink(tmppath);  // temp file no longer needed
 			
-			write_index_json(PHOTOS_DIR);
+			log_msg("%s triggered sanitize on %s (%ld bytes)", ip, fname, content_len);
+
+            write_index_json(PHOTOS_DIR);
             char json[320];
-            int n = snprintf(json, sizeof(json), "{ \"ok\": true, \"path\": \"%s\" }\n", outpath);
-            if (send_header_tls(ssl, 201, "Created", "application/json; charset=utf-8", n, keep, NULL) >= 0) {
+            int n = snprintf(json, sizeof(json),
+                             "{ \"ok\": true, \"path\": \"%s\" }\n", outpath);
+            if (send_header_tls(ssl, 201, "Created",
+                                "application/json; charset=utf-8",
+                                n, keep, NULL) >= 0) {
                 ssl_write_all(ssl, json, (size_t)n);
             }
             if (!keep) break; else continue;
@@ -727,24 +942,44 @@ int main() {
     printf("Password defaults to 'password' (override with APP_PASSWORD)\n");
 	ensure_photos_dir();
 	
-    while (1) {
-        struct sockaddr_in cli; socklen_t clilen = sizeof(cli);
-        int c = accept(s, (struct sockaddr*)&cli, &clilen);
-        if (c < 0) {
-            if (errno == EINTR) continue;
-            perror("accept"); continue;
-        }
-        struct client_arg *arg = malloc(sizeof(*arg));
-        if (!arg) { close(c); continue; }
-        arg->fd = c;
-        arg->ctx = ctx;
-
-        pthread_t th;
-        if (pthread_create(&th, NULL, handle_client, arg) != 0) {
-            perror("pthread_create"); close(c); free(arg); continue;
-        }
-        pthread_detach(th);
+	// start logger thread
+    pthread_t log_th;
+	if (pthread_create(&log_th, NULL, logger_thread, NULL) != 0) {
+        perror("pthread_create logger");
+        exit(1);
     }
+    pthread_detach(log_th);
+    while (1) {
+		struct sockaddr_in cli; socklen_t clilen = sizeof(cli);
+		int c = accept(s, (struct sockaddr*)&cli, &clilen);
+		if (c < 0) {
+        if (errno == EINTR) continue;
+        perror("accept"); continue;
+		}
+
+		struct client_arg *arg = malloc(sizeof(*arg));
+		if (!arg) { close(c); continue; }
+		arg->fd = c;
+		arg->ctx = ctx;
+
+		// Get dotted-quad IP
+		if (!inet_ntop(AF_INET, &cli.sin_addr, arg->ip, sizeof(arg->ip))) {
+			strncpy(arg->ip, "unknown", sizeof(arg->ip));
+			arg->ip[sizeof(arg->ip) - 1] = '\0';
+		}
+
+		// Log new connection
+		log_msg("%s connected", arg->ip);
+
+		pthread_t th;
+		if (pthread_create(&th, NULL, handle_client, arg) != 0) {
+			perror("pthread_create");
+			close(c);
+			free(arg);
+			continue;
+		}
+		pthread_detach(th);
+	}
 
     SSL_CTX_free(ctx);
     EVP_cleanup();

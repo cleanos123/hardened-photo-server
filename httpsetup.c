@@ -850,15 +850,35 @@ static void *handle_client(void *argp) {
         else snprintf(path, sizeof(path), "%s", decoded);
         free(decoded);
 		
-		if (!strncmp(path, "photos/", 7)) {
-			char mapped[4096];
-			int n = snprintf(mapped, sizeof(mapped), "%s/%s", PHOTOS_DIR, path + 7);
-			if (n < 0 || (size_t)n >= sizeof(mapped)) {
-				mapped[sizeof(mapped) - 1] = '\0';  // force terminate
-			}
-			strncpy(path, mapped, sizeof(path) - 1);
-			path[sizeof(path) - 1] = '\0';
-		}
+		        if (!strncmp(path, "photos/", 7)) {
+            char mapped[4096];
+
+            size_t dir_len = strlen(PHOTOS_DIR);
+            /* room left for '/', the filename, and '\0' */
+            size_t max_file_len;
+            if (dir_len + 2 >= sizeof(mapped)) {
+                /* PHOTOS_DIR is too long, fallback or error */
+                mapped[0] = '\0';
+            } else {
+                max_file_len = sizeof(mapped) - dir_len - 2; // '/' + '\0'
+
+                int n = snprintf(
+                    mapped,
+                    sizeof(mapped),
+                    "%s/%.*s",
+                    PHOTOS_DIR,
+                    (int)max_file_len,
+                    path + 7
+                );
+
+                if (n < 0 || (size_t)n >= sizeof(mapped)) {
+                    mapped[sizeof(mapped) - 1] = '\0';  // force terminate
+                }
+            }
+
+            strncpy(path, mapped, sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
+        }
 
         if (is_head) {
             struct stat st;

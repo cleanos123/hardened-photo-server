@@ -41,6 +41,10 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#ifndef PORT
+#define PORT 443
+#endif
+
 #define PHOTOS_DIR "/mnt/newdisk/photos"
 #ifndef BUFFER_SIZE
 #define BUFFER_SIZE (128 * 1024)
@@ -691,7 +695,7 @@ int main() {
         die("pledge");
 	#endif
 
-    int port = 8080;
+    int port = PORT;
 	
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();

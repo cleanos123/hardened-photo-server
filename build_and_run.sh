@@ -80,4 +80,4 @@ echo "[*] Build successful."
 # 4. Run the HTTPS server
 # -----------------------------
 echo "[*] Starting HTTPS server..."
-su - "$SUDO_USER" -c "./httpsetup"
+./"$OUT"

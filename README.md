@@ -139,6 +139,15 @@ LINK:https://www.youtube.com/watch?v=07rSLK_zW-s&t
 
 **Highly Recommend using ssh to do these steps as openbsd configuration is annoying to deal with**
 
+Make sure to install git and htop(other dependencies will be installed).
+
+Commands to run
+```bash
+doas git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+chmod +x ./build_and_run.sh
+```
+
 ---
 
 # Stopping & Removing the Container

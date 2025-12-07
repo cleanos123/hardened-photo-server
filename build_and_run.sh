@@ -22,7 +22,7 @@ echo "[*] OpenBSD: Checking and installing dependencies..."
 # 
 # pkg_add is safe to re-run; it skips installed packages.
 
-PKGS="jpeg gmake"
+PKGS="jpeg gmake libjpeg-dev"
 
 for pkg in $PKGS; do
     if ! pkg_info -q "$pkg" >/dev/null 2>&1; then
@@ -59,6 +59,7 @@ cc -O2 -pthread -Wall -Wextra \
    -L/usr/local/lib \
    -o "$OUT" "$SRC" \
    -lssl -lcrypto -ljpeg
+
 
 echo "[*] Build successful."
 

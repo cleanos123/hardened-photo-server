@@ -40,7 +40,7 @@ echo "[*] All required packages are installed."
 # -----------------------------
 if [ ! -d "$PHOTOS_DIR" ]; then
     echo "[*] Creating photos directory at '$PHOTOS_DIR'..."
-    doas mkdir -p "$PHOTOS_DIR"
+    mkdir -p "$PHOTOS_DIR"
 fi
 
 # Reasonable default perms (owner rwx, world rx)

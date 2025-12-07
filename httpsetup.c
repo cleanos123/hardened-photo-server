@@ -47,7 +47,7 @@
 #define PORT 443
 #endif
 
-#define PHOTOS_DIR "/mnt/newdisk/photos"
+#define PHOTOS_DIR "./photos"
 #ifndef BUFFER_SIZE
 #define BUFFER_SIZE (128 * 1024)
 #endif

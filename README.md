@@ -1,2 +1,277 @@
 # hardened-photo-server
-A self-hosted photo upload and gallery service built in C, demonstrating web hardening (privilege separation, seccomp, TLS proxy)
+A hardened, self-hosted photo upload and gallery server written in **C**, demonstrating secure systems programming practices including:
+
+- HTTPS with OpenSSL  
+- Privilege separation  
+- Strict upload validation  
+- JPEG sanitization  
+- Logging & observability  
+- Containerized deployment (Docker)  
+
+The system can run end-to-end with:
+
+```bash
+make up && make demo
+```
+
+---
+
+# Features
+
+- Fully custom HTTPS server (no external web server required)
+- Secure image upload pipeline:
+  - Content-Length enforcement
+  - Filename sanitization
+  - MIME sniffing
+  - JPEG validation & re-encode via libjpeg
+  - Corrupt/unsafe files rejected
+- Static HTML gallery UI
+- Asynchronous logging thread
+- Metrics export capability
+- Runs as **unprivileged user** inside Docker
+- Self-contained, reproducible deployment
+
+---
+
+# Running the Server (Windows • macOS • Linux • OpenBSD)
+
+The recommended method is **Docker**, so the server always runs in a hardened Linux container.
+
+---
+
+## Windows (Docker Desktop)
+
+### **Prerequisites**
+1. Install **Docker Desktop for Windows**  
+2. Install **Git for Windows**  
+3. Install `make` (via Scoop or Git for Windows tools)
+
+### **Run**
+```bash
+git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+
+make up        # build image + start container
+make demo      # optional automated curl test
+```
+
+Open your browser:
+
+```
+https://localhost:443/
+```
+
+Accept the self-signed certificate.
+
+---
+
+## macOS (Docker Desktop)
+
+### **Prerequisites**
+```bash
+brew install git make
+```
+
+### **Run**
+```bash
+git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+
+make up
+make demo
+```
+
+Browse to:
+
+```
+https://localhost:443/
+```
+
+---
+
+## Linux (Ubuntu / Debian / Fedora / Arch)
+
+### **Install Docker**
+
+**Ubuntu / Debian**
+```bash
+sudo apt update
+sudo apt install docker.io git make
+sudo systemctl enable --now docker
+```
+
+**Fedora**
+```bash
+sudo dnf install docker git make
+sudo systemctl enable --now docker
+```
+
+**Arch**
+```bash
+sudo pacman -S docker git make
+sudo systemctl enable --now docker
+```
+
+### **Run**
+```bash
+git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+
+make up
+make demo
+```
+
+Browse:
+
+```
+https://localhost:443/
+```
+
+---
+
+## OpenBSD
+
+OpenBSD does **not support Docker natively**, but you have two options:
+
+---
+
+### **Option A — Podman (recommended)**
+
+Install dependencies:
+
+```sh
+pkg_add podman git gmake
+```
+
+Build & run:
+
+```sh
+git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+
+podman build -t hardened-photo-server .
+podman run -d --name hardened-photo-server -p 443:443 hardened-photo-server
+```
+
+---
+
+### **Option B — Run a Linux VM using vmm**
+
+Start a Linux VM:
+
+```sh
+vmctl create disk.img -s 8G
+vmctl start vm1 -m 1G -L -d disk.img -r alpine.iso
+```
+
+Inside the VM:
+
+```sh
+git clone https://github.com/cleanos123/hardened-photo-server.git
+cd hardened-photo-server
+make up
+```
+
+---
+
+# Stopping & Removing the Container
+
+Stop the running server:
+
+```bash
+docker stop hardened-photo-server
+```
+
+Remove the container:
+
+```bash
+docker rm -f hardened-photo-server
+```
+
+(Optional) Clean unused Docker images:
+
+```bash
+docker system prune -a
+```
+
+---
+
+# Development (optional local build)
+
+If you want to build the C server *without* Docker:
+
+### Linux or WSL:
+
+```bash
+sudo apt install build-essential libssl-dev libjpeg-dev openssl
+make build
+make run
+```
+
+OpenBSD uses:
+
+```sh
+pkg_add jpeg gmake
+./build_and_run_httpsetup.sh
+```
+
+---
+
+# Architecture Summary
+
+```
++-------------------------------------------------------------+
+| HTTPS Frontend (C)                                          |
+|  • TLS termination                                          |
+|  • GET: static UI / gallery                                 |
+|  • POST /upload-raw: upload pipeline                        |
+|                                                             |
+| Upload Pipeline                                             |
+|  • Enforce Content-Length                                   |
+|  • Sanitize filenames                                       |
+|  • Validate JPEG structure (libjpeg)                        |
+|  • Re-encode to safe form                                   |
+|  • Reject malformed files                                   |
+|                                                             |
+| Storage Layer                                               |
+|  • /photos directory                                        |
+|  • timestamped sanitized filenames                          |
+|                                                             |
+| Logging Layer                                               |
+|  • Async logging thread                                     |
+|  • Upload events, errors, security logs                     |
+|                                                             |
++-------------------------------------------------------------+
+```
+
+---
+
+# 📁 Project Structure
+
+```
+/app
+  httpsetup.c                 # HTTPS server & upload pipeline
+  Dockerfile                 # Containerized build/deploy
+  Makefile                   # make up, make demo, etc.
+  build_and_run_httpsetup.sh # BSD build script (optional)
+  html/                      # frontend UI
+
+/artifacts/release/
+  pcaps/
+  metrics.json
+  metrics.csv
+  logs/
+  charts/
+
+/docs
+  ARCHITECTURE.md
+  RUNBOOK.md
+  SECURITY.md
+  what-works-whats-next.md
+```
+
+---
+
+# License
+
+MIT (or your preferred license).

@@ -1,36 +1,69 @@
 #!/bin/sh
 # build_and_run_httpsetup.sh
-# Checks for cert/key, builds the HTTPS server, then runs it.
+# OpenBSD-specific builder: installs deps, builds HTTPS server, runs it.
+
+set -e
 
 CERT="server.crt"
 KEY="server.key"
 SRC="httpsetup.c"
 OUT="httpsetup"
 
-# 1. Check if cert/key exist; if not, generate self-signed ones
+echo "[*] OpenBSD: Checking and installing dependencies..."
+
+# -----------------------------
+# 1. Install dependencies
+# -----------------------------
+# Required packages:
+#   - jpeg (libjpeg)
+#   - openssl (comes with base system, pkg adds libraries/symlinks)
+#   - gmake (optional, but nice to have)
+#   - llvm or egcc (optional if you want a different compiler)
+# 
+# pkg_add is safe to re-run; it skips installed packages.
+
+PKGS="jpeg gmake"
+
+for pkg in $PKGS; do
+    if ! pkg_info -q "$pkg" >/dev/null 2>&1; then
+        echo "[*] Installing package: $pkg"
+        doas pkg_add "$pkg"
+    else
+        echo "[*] Package already installed: $pkg"
+    fi
+done
+
+echo "[*] All required packages are installed."
+
+# -----------------------------
+# 2. Generate certs if missing
+# -----------------------------
 if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
     echo "[*] Generating self-signed certificate..."
-    openssl req -x509 -newkey rsa:2048 -keyout "$KEY" -out "$CERT" -days 365 -nodes \
+    openssl req -x509 -newkey rsa:2048 \
+        -keyout "$KEY" -out "$CERT" \
+        -days 365 -nodes \
         -subj "/C=US/ST=None/L=None/O=SelfSigned/CN=localhost"
 else
-    echo "[*] Found existing certificate and key."
+    echo "[*] Found existing certificate + key."
 fi
 
-# 2. Compile the HTTPS server
-echo "[*] Compiling..."
+# -----------------------------
+# 3. Build the HTTPS server
+# -----------------------------
+echo "[*] Building HTTPS server..."
 
-egcc -O2 -pthread -Wall -Wextra \
+# Use OpenBSD's clang (`cc`) unless you explicitly want ports GCC.
+cc -O2 -pthread -Wall -Wextra \
    -I/usr/local/include \
    -L/usr/local/lib \
-   -o httpsetup httpsetup.c \
+   -o "$OUT" "$SRC" \
    -lssl -lcrypto -ljpeg
 
-if [ $? -ne 0 ]; then
-    echo "[!] Build failed."
-    exit 1
-fi
 echo "[*] Build successful."
 
-# 3. Run it
+# -----------------------------
+# 4. Run the HTTPS server
+# -----------------------------
 echo "[*] Starting HTTPS server..."
 ./"$OUT"

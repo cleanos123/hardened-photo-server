@@ -30,7 +30,6 @@ make up && make demo
 - Metrics export capability
 - Runs as **unprivileged user** inside Docker
 - Self-contained, reproducible deployment
-
 ---
 
 # Running the Server (Windows • macOS • Linux • OpenBSD)
@@ -145,9 +144,9 @@ Commands to run
 ```bash
 doas git clone https://github.com/cleanos123/hardened-photo-server.git
 cd hardened-photo-server
-chmod +x ./build_and_run.sh
+doas chmod +x ./build_and_run.sh
+doas ./build_and_run.sh
 ```
-
 ---
 
 # Stopping & Removing the Container
@@ -222,7 +221,7 @@ pkg_add jpeg gmake
 
 ---
 
-# 📁 Project Structure
+# Project Structure
 
 ```
 /app

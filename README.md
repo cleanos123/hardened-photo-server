@@ -132,8 +132,11 @@ https://localhost:
 ## OpenBSD (advanced users)
 
 OpenBSD does **not support Docker natively**, so we will run on the OS itself.
+
 **Please look up a tutorial on how to install openbsd as it will be its own seperate thing:**
+
 LINK:https://www.youtube.com/watch?v=07rSLK_zW-s&t
+
 **Highly Recommend using ssh to do these steps as openbsd configuration is annoying to deal with**
 
 ---

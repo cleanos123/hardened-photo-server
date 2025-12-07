@@ -1015,16 +1015,20 @@ void configure_context(SSL_CTX *context){
 // ---------- server bootstrap ----------
 int main() {
     signal(SIGPIPE, SIG_IGN);
+	
 	#ifdef __OpenBSD__
-    /* Whitelist filesystem access */
-	printf("RUNNING OpenBSD\n");
-    if (unveil("/mnt/newdisk/photos", "rwc") == -1) die("unveil photos");  /* uploads dir */
-    if (unveil(".", "r") == -1)                    die("unveil cwd");      /* certs, html in cwd */
-    if (unveil(NULL, NULL) == -1)                  die("unveil lock");
+    printf("RUNNING OpenBSD\n");
 
-    /* Restrict syscalls for runtime */
-    if (pledge("stdio rpath wpath cpath inet", NULL) == -1)
-        die("pledge");
+    // 1) Unveil paths while we still have full rights
+    if (unveil(PHOTOS_DIR, "rwc") == -1) { perror("unveil photos"); exit(1); }
+    if (unveil(".", "r") == -1)          { perror("unveil cwd");    exit(1); }
+    if (unveil(NULL, NULL) == -1)        { perror("unveil lock");   exit(1); }
+
+    // 2) Now drop privileges with pledge
+    if (pledge("stdio rpath wpath cpath inet", NULL) == -1) {
+        perror("pledge");
+        exit(1);
+    }
 	#endif
 
     int port = PORT;

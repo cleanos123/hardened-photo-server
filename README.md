@@ -58,7 +58,7 @@ make demo      # optional automated curl test
 Open your browser:
 
 ```
-https://localhost:443/
+https://localhost
 ```
 
 Accept the self-signed certificate.
@@ -84,7 +84,7 @@ make demo
 Browse to:
 
 ```
-https://localhost:443/
+https://localhost
 ```
 
 ---
@@ -124,53 +124,15 @@ make demo
 Browse:
 
 ```
-https://localhost:443/
+https://localhost:
 ```
 
 ---
 
-## OpenBSD
+## OpenBSD (advanced users)
 
-OpenBSD does **not support Docker natively**, but you have two options:
-
----
-
-### **Option A — Podman (recommended)**
-
-Install dependencies:
-
-```sh
-pkg_add podman git gmake
-```
-
-Build & run:
-
-```sh
-git clone https://github.com/cleanos123/hardened-photo-server.git
-cd hardened-photo-server
-
-podman build -t hardened-photo-server .
-podman run -d --name hardened-photo-server -p 443:443 hardened-photo-server
-```
-
----
-
-### **Option B — Run a Linux VM using vmm**
-
-Start a Linux VM:
-
-```sh
-vmctl create disk.img -s 8G
-vmctl start vm1 -m 1G -L -d disk.img -r alpine.iso
-```
-
-Inside the VM:
-
-```sh
-git clone https://github.com/cleanos123/hardened-photo-server.git
-cd hardened-photo-server
-make up
-```
+OpenBSD does **not support Docker natively**, so we will run on the OS itself.
+**Highly Recommend using ssh to do these steps as openbsd configuration is annoying to deal with**
 
 ---
 

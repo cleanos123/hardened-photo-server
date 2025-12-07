@@ -11,18 +11,10 @@ OUT="httpsetup"
 
 echo "[*] OpenBSD: Checking and installing dependencies..."
 
-# -----------------------------
-# 1. Install dependencies
-# -----------------------------
 # Required packages:
-#   - jpeg (libjpeg)
-#   - openssl (comes with base system, pkg adds libraries/symlinks)
-#   - gmake (optional, but nice to have)
-#   - llvm or egcc (optional if you want a different compiler)
-# 
-# pkg_add is safe to re-run; it skips installed packages.
-
-PKGS="jpeg gmake libjpeg-dev"
+#   jpeg  - libjpeg with jpeglib.h
+#   gmake - optional, but useful
+PKGS="jpeg gmake"
 
 for pkg in $PKGS; do
     if ! pkg_info -q "$pkg" >/dev/null 2>&1; then
@@ -32,6 +24,14 @@ for pkg in $PKGS; do
         echo "[*] Package already installed: $pkg"
     fi
 done
+
+# Sanity check: make sure jpeglib.h exists
+if [ ! -f /usr/local/include/jpeglib.h ]; then
+    echo "[!] jpeglib.h not found under /usr/local/include."
+    echo "    Make sure the 'jpeg' package installed correctly:"
+    echo "    doas pkg_delete jpeg && doas pkg_add jpeg"
+    exit 1
+fi
 
 echo "[*] All required packages are installed."
 
@@ -53,13 +53,11 @@ fi
 # -----------------------------
 echo "[*] Building HTTPS server..."
 
-# Use OpenBSD's clang (`cc`) unless you explicitly want ports GCC.
 cc -O2 -pthread -Wall -Wextra \
    -I/usr/local/include \
    -L/usr/local/lib \
    -o "$OUT" "$SRC" \
    -lssl -lcrypto -ljpeg
-
 
 echo "[*] Build successful."
 

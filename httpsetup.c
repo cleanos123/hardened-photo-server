@@ -1015,7 +1015,7 @@ void configure_context(SSL_CTX *context){
 // ---------- server bootstrap ----------
 int main() {
     signal(SIGPIPE, SIG_IGN);
-	
+	ensure_photos_dir();
 	#ifdef __OpenBSD__
 	printf("RUNNING OpenBSD\n");
 
@@ -1068,7 +1068,7 @@ int main() {
     printf("Serving HTTPS (login-gated) on 0.0.0.0:%d\n", port);
     printf("Use certificate: %s\n", CERT_FILE);
     printf("Password defaults to 'password' (override with APP_PASSWORD)\n");
-	ensure_photos_dir();
+	
 	
 	// start logger thread
     pthread_t log_th;

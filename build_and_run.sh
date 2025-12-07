@@ -36,6 +36,20 @@ fi
 echo "[*] All required packages are installed."
 
 # -----------------------------
+# 1. Ensure photos directory exists and is writable
+# -----------------------------
+if [ ! -d "$PHOTOS_DIR" ]; then
+    echo "[*] Creating photos directory at '$PHOTOS_DIR'..."
+    mkdir -p "$PHOTOS_DIR"
+fi
+
+# Reasonable default perms (owner rwx, world rx)
+chmod 755 "$PHOTOS_DIR"
+
+echo "[*] photos directory: "
+ls -ld "$PHOTOS_DIR"
+
+# -----------------------------
 # 2. Generate certs if missing
 # -----------------------------
 if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then

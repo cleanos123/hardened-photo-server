@@ -1017,12 +1017,19 @@ int main() {
     signal(SIGPIPE, SIG_IGN);
 	
 	#ifdef __OpenBSD__
-    printf("RUNNING OpenBSD\n");
+	printf("RUNNING OpenBSD\n");
 
-    // 1) Unveil paths while we still have full rights
-    if (unveil(PHOTOS_DIR, "rwc") == -1) { perror("unveil photos"); exit(1); }
-    if (unveil(".", "r") == -1)          { perror("unveil cwd");    exit(1); }
-    if (unveil(NULL, NULL) == -1)        { perror("unveil lock");   exit(1); }
+	/* Allow reading HTML + certs in current directory */
+	if (unveil(".", "r") == -1) { perror("unveil ."); exit(1); }
+
+	/* Allow reading/writing/creating uploaded files */
+	if (unveil(PHOTOS_DIR, "rwc") == -1) { perror("unveil photos"); exit(1); }
+
+	/* Allow temporary file creation */
+	if (unveil("/tmp", "rwc") == -1) { perror("unveil tmp"); exit(1); }
+
+	/* Lock the unveil rules */
+	if (unveil(NULL, NULL) == -1) { perror("unveil lock"); exit(1); }
 
     // 2) Now drop privileges with pledge
     if (pledge("stdio rpath wpath cpath inet", NULL) == -1) {

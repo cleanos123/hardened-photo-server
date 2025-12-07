@@ -8,6 +8,7 @@ CERT="server.crt"
 KEY="server.key"
 SRC="httpsetup.c"
 OUT="httpsetup"
+PHOTOS_DIR="./photos"
 
 echo "[*] OpenBSD: Checking and installing dependencies..."
 

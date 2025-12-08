@@ -256,4 +256,8 @@ gcov httpsetup.c
 
 # License
 
-MIT (or your preferred license).
+BSD 2-Clause License
+
+
+LINK FOR REFERENCE:
+https://youtu.be/wAMsyb0K2jE

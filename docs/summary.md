@@ -48,7 +48,6 @@
 
 - Minimal storage permissions
 
----
 
 ##WHAT DIDN’T MAKE IT INTO THIS RELEASE
 
@@ -81,5 +80,3 @@ it was not implemented.
 - Final architecture diagrams
 
 - More troubleshooting detail 
-
----

@@ -1012,10 +1012,12 @@ void configure_context(SSL_CTX *context){
         die("Certificate and key do not match");
 }
 
+#ifndef UNIT_TEST
 // ---------- server bootstrap ----------
 int main() {
     signal(SIGPIPE, SIG_IGN);
 	ensure_photos_dir();
+	
 	#ifdef __OpenBSD__
 	printf("RUNNING OpenBSD\n");
 
@@ -1113,3 +1115,4 @@ int main() {
     EVP_cleanup();
     return 0;
 }
+#endif

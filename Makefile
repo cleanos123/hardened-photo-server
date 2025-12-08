@@ -16,6 +16,11 @@ CC          ?= gcc
 CFLAGS      ?= -O2 -Wall -Wextra -std=c11 -pthread
 LIBS        ?= -lssl -lcrypto -ljpeg -lpthread
 
+ifdef COVERAGE
+CFLAGS += --coverage
+LIBS   += --coverage
+endif
+
 SRC         := httpsetup.c
 BIN         := httpsetup
 
@@ -120,3 +125,33 @@ demo:
 		echo "==> (Optional) Place a valid JPEG named 'demo.jpg' in the repo root to test upload."; \
 	fi
 	@echo "==> Demo complete."
+	
+TEST_BIN := tests/unit_helpers
+
+.PHONY: test unit-tests integration-tests
+
+unit-tests: $(TEST_BIN)
+	@echo "==> Running unit tests"
+	./$(TEST_BIN)
+
+$(TEST_BIN): httpsetup.c tests/unit_helpers.c
+	@echo "==> Building unit test binary"
+	$(CC) $(CFLAGS) -DUNIT_TEST -o $@ tests/unit_helpers.c $(LIBS)
+
+integration-tests:
+	@echo "==> Running integration tests (requires server running)"
+	@./tests/integration_happy_upload.sh
+	@./tests/integration_bad_type.sh
+	@./tests/integration_too_big.sh
+
+# Full test suite: start container, run tests, stop container
+test: docker-build
+	@echo "==> Starting test container"
+	-@docker rm -f $(CONTAINER_NAME)-test >/dev/null 2>&1 || true
+	docker run -d --name $(CONTAINER_NAME)-test -p $(PORT):$(PORT) $(IMAGE_NAME)
+	@sleep 5
+	$(MAKE) unit-tests
+	$(MAKE) integration-tests
+	@echo "==> Stopping test container"
+	@docker rm -f $(CONTAINER_NAME)-test >/dev/null 2>&1 || true
+

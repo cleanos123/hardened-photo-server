@@ -191,7 +191,14 @@ pkg_add jpeg gmake
 ```
 
 ---
-
+---
+#Running tests
+```bash
+make clean
+make test COVERAGE=1
+gcov httpsetup.c
+```
+---
 # Architecture Summary
 
 ```

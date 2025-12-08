@@ -6,7 +6,7 @@ BASE_URL="${BASE_URL:-https://localhost:443}"
 
 wait_for_server
 
-echo "[int] negative: bad Content-Type"
+echo "[int] negative: bad Content-Type (text/plain instead of image/* or octet-stream)"
 
 HTTP_CODE=$(printf "hello" | curl -k -s -o /dev/null -w "%{http_code}" \
   -X POST "$BASE_URL/upload-raw" \
@@ -15,8 +15,10 @@ HTTP_CODE=$(printf "hello" | curl -k -s -o /dev/null -w "%{http_code}" \
   --data-binary @-)
 
 echo "[int] got HTTP $HTTP_CODE"
-# expect rejection (415 or 400 or 500 depending on your handler)
-case "$HTTP_CODE" in
-  4*|5*) echo "[int] negative bad type passed." ;;
-  *) echo "[int] expected failure status, got $HTTP_CODE"; exit 1 ;;
-esac
+
+if [ "$HTTP_CODE" = "415" ]; then
+  echo "[int] negative bad Content-Type passed (got 415)."
+else
+  echo "[int] expected 415, got $HTTP_CODE"
+  exit 1
+fi

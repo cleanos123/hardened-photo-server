@@ -7,10 +7,10 @@ BASE_URL="${BASE_URL:-https://localhost:443}"
 wait_for_server
 
 echo "[int] happy-path: upload small jpeg"
-# create a tiny fake jpeg if none exists
+
+# Simple tiny payload; you can swap in a real jpg if you like
 if [ ! -f tests/demo.jpg ]; then
-  # 1x1 black JPEG from /dev/zerowrapped via printf header; but simplest is just reuse any small jpg in repo
-  cp index.html tests/demo.jpg 2>/dev/null || echo "fake" > tests/demo.jpg
+  printf '\xff\xd8\xff\xd9' > tests/demo.jpg   # minimal JPEG
 fi
 
 HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" \
@@ -20,6 +20,10 @@ HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" \
   --data-binary @tests/demo.jpg)
 
 echo "[int] got HTTP $HTTP_CODE"
-test "$HTTP_CODE" = "200" || { echo "[int] EXPECT 200"; exit 1; }
 
-echo "[int] happy-path upload passed."
+if [ "$HTTP_CODE" = "200" ]; then
+  echo "[int] happy-path upload passed."
+else
+  echo "[int] expected 200, got $HTTP_CODE"
+  exit 1
+fi

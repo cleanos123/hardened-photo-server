@@ -26,8 +26,9 @@ jobs:
           PORT: 443
         run: |
           make clean
-          make all          # ensure your binaries & test helpers are built
+          make all
           chmod +x tests/unit_helpers || true
+          chmod +x tests/*.sh || true
           make test COVERAGE=1
           gcov httpsetup.c || true
 

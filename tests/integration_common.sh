@@ -2,6 +2,7 @@
 set -e
 
 BASE_URL="${BASE_URL:-https://localhost:443}"
+AUTH_COOKIE_HEADER="Cookie: auth=1"
 
 wait_for_server() {
   echo "[int] waiting for server at $BASE_URL..."

@@ -8,12 +8,12 @@ wait_for_server
 
 echo "[int] negative: oversized upload (expect 413)"
 
-# 210 MB stream (MAX_UPLOAD is 200 MB)
-SIZE_MB=210
+SIZE_MB=210  # > MAX_UPLOAD (200MB)
 
 HTTP_CODE=$(dd if=/dev/zero bs=1M count=$SIZE_MB 2>/dev/null | \
   curl -k -s -o /dev/null -w "%{http_code}" \
     -X POST "$BASE_URL/upload-raw" \
+    -H "$AUTH_COOKIE_HEADER" \
     -H "Content-Type: application/octet-stream" \
     -H "X-Filename: huge.bin" \
     --data-binary @- || true)
@@ -21,7 +21,7 @@ HTTP_CODE=$(dd if=/dev/zero bs=1M count=$SIZE_MB 2>/dev/null | \
 echo "[int] got HTTP $HTTP_CODE"
 
 if [ "$HTTP_CODE" = "413" ]; then
-  echo "[int] negative oversized upload passed (got 413)."
+  echo "[int] negative oversized upload passed (413)."
 else
   echo "[int] expected 413, got $HTTP_CODE"
   exit 1

@@ -19,9 +19,7 @@ jobs:
             build-essential \
             libssl-dev \
             libjpeg-dev \
-            lcov \
-            docker.io
-          sudo usermod -aG docker $USER || true
+            lcov
 
       - name: Build and test with coverage
         env:

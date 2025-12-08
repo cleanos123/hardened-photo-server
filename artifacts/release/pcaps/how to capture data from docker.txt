@@ -1,0 +1,6 @@
+docker run --rm -it \
+  --net=container:hardened-photo-server \
+  --cap-add=NET_ADMIN \
+  -v "$(pwd)/artifacts/release/pcaps:/capture" \
+  nicolaka/netshoot \
+  tcpdump -i any port 443 -w /capture/traffic.pcap
